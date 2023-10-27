@@ -77,29 +77,47 @@ async function callOpenAI(apiKey, systemPrompt, userPrompt, userId) {
   }
 }
 
+async function callOpenAIExtra(apiKey, systemPrompt, userPrompt, userId) {
+  const url = "https://api.openai.com/v1/chat/completions";
+  const options = {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      "model": "gpt-3.5-turbo-16k",
+      "messages": [
+        {"role": "system", "content": systemPrompt},
+        {"role": "user", "content": userPrompt}
+      ],
+      "temperature": 0.9
+    })
+  };
+
+  const fetch = (await import("node-fetch")).default;
+  try {
+    const response = await fetch(url, options);
+    const data = await response.json();
+    await saveTokenUsage(data.usage, userId, "blog-post");
+
+    if (data.choices && data.choices.length > 0 && data.choices[0].message) {
+      return data.choices[0].message.content.trim();
+    } else {
+      console.error('Respuesta inesperada de OpenAI:', data);
+      return '';
+    }
+  } catch (error) {
+    console.error('Error al llamar a OpenAI:', error);
+    return '';
+  }
+}
+
 async function contentEditor(openaiKey, userPrompt, userId) {
   try {
     const systemPrompt = "Eres un editor SEO, te voy a dar un contenido de blog y quiero que me regreses el mismo contenido pero con etiquetas HTML <h2> y <h3>. También quiero que agregues negritas y itálicas para resaltar los textos importantes";
-    
-    // Dividir el userPrompt en palabras
-    const words = userPrompt.split(/\s+/);
-    
-    // Verificar si el userPrompt excede el límite de palabras
-    if (words.length <= 2000) {
-      // Si no excede el límite, procesar el texto completo
-      const response = await callOpenAI(openaiKey, systemPrompt, userPrompt, userId);
-      return response;
-    } else {
-      // Si excede el límite, dividir el texto en segmentos y procesar cada segmento
-      const segments = [];
-      while (words.length) {
-        const segment = words.splice(0, 2000).join(' ');
-        const response = await callOpenAI(openaiKey, systemPrompt, segment, userId);
-        segments.push(response);
-      }
-      // Unir los segmentos procesados y retornar el resultado
-      return segments.join(' ');
-    }
+    const response = await callOpenAIExtra(openaiKey, systemPrompt, userPrompt, userId);
+
   } catch (error) {
     console.error("Error al mejorar el contenido:", error);
     throw error; // Re-throw the error after logging it
