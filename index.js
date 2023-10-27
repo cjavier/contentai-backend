@@ -2,14 +2,18 @@ import express from "express";
 import admin from 'firebase-admin';
 import serviceAccount from './contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json' assert { type: 'json' };
 import cors from 'cors';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import path from 'path';
 
+
+const serviceAccountPath = path.join(__dirname, 'contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json');
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccountPath)
+});
 
 const app = express();
 const PORT = 8080;
-app.use(cors({
-  origin: 'http://localhost:3000' // Reemplaza esto con el origen de tu aplicación cliente
-}));
+app.use(cors());
+
 
 
 admin.initializeApp({
