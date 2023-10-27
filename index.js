@@ -1,21 +1,17 @@
 import express from "express";
 import admin from 'firebase-admin';
-import serviceAccount from '/etc/secrets/contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json' assert { type: 'json' };
+import serviceAccount from './etc/secrets/contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json' assert { type: 'json' };
 import cors from 'cors';
-import path from 'path';
+//import path from 'path';
 
 
-const serviceAccountPath = path.join(__dirname, 'contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json');
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
 
 const app = express();
 const PORT = 8080;
 app.use(cors());
 
 
-
+//const serviceAccountPath = path.join(__dirname, 'contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json');
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
