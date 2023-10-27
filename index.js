@@ -7,7 +7,7 @@ import path from 'path';
 
 const serviceAccountPath = path.join(__dirname, 'contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json');
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccountPath)
+  credential: admin.credential.cert(serviceAccount)
 });
 
 const app = express();
