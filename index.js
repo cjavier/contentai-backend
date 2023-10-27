@@ -154,6 +154,15 @@ async function getAllTitlesWithOutline(db, keywordPlanId) {
   return titlesWithOutline;
 }
 
+async function getTitleData(db, keywordPlanId, keywordId, titleId) {
+  const titleRef = db.collection(`keywordsplans/${keywordPlanId}/keywords/${keywordId}/titles`).doc(titleId);
+  const titleDoc = await titleRef.get();
+  if (!titleDoc.exists) {
+    throw new Error("No se encontró el título con el ID proporcionado.");
+  }
+  const titleData = titleDoc.data();
+  return titleData.title;
+}
 
 async function getKeywordAndTitleData(db, keywordPlanId, keywordId, titleId) {
   const keywordRef = db.collection(`keywordsplans/${keywordPlanId}/keywords`).doc(keywordId);
@@ -200,12 +209,15 @@ async function createContentAndSave(db, userId, keywordPlanId, keywordId, titleI
   console.log("Estamos editando el contenido");
   const editorResponse = await contentEditor(openaiKey, titleContent, userId);
 
+  const title = await getTitleData(db, keywordPlanId, keywordId, titleId);
+
   console.log("Estamos guardando el contenido en la colección 'contents'");
   const contentDocRef = await db.collection('contents').add({
     userId,
     keywordPlanId,
     keywordId,
     titleId,
+    title,
     content: editorResponse
   });
 
