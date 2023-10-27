@@ -117,7 +117,7 @@ async function contentEditor(openaiKey, userPrompt, userId) {
   try {
     const systemPrompt = "Eres un editor SEO, te voy a dar un contenido de blog y quiero que me regreses el mismo contenido pero con etiquetas HTML <h2> y <h3>. También quiero que agregues negritas y itálicas para resaltar los textos importantes";
     const response = await callOpenAIExtra(openaiKey, systemPrompt, userPrompt, userId);
-
+    return response;
   } catch (error) {
     console.error("Error al mejorar el contenido:", error);
     throw error; // Re-throw the error after logging it
