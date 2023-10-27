@@ -209,8 +209,6 @@ async function createContentAndSave(db, userId, keywordPlanId, keywordId, titleI
   console.log("Estamos editando el contenido");
   const editorResponse = await contentEditor(openaiKey, titleContent, userId);
 
-  const title = await getTitleData(db, keywordPlanId, keywordId, titleId);
-
   console.log("Estamos guardando el contenido en la colección 'contents'");
   const contentDocRef = await db.collection('contents').add({
     userId,
