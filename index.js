@@ -1,10 +1,10 @@
 import express from "express";
 import admin from 'firebase-admin';
-import serviceAccount from '/etc/secrets/contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json' assert { type: 'json' };
+import serviceAccount from './etc/secrets/contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json' assert { type: 'json' };
 import cors from 'cors';
-//import path from 'path';
-
-
+import { callOpenAI, callOpenAIExtra, contentEditor, CallOpenAIOutline } from './openaiCompletitionFunctions.js'; // Import the functions
+import { getBuyerPersonaPrompts, getKeywordsAndTitles, getAllTitlesWithOutline, getKeywordAndTitleData } from './firebaseFunctions.js';
+import { getOpenAIKey } from './openaiAuth.js';
 
 const app = express();
 const PORT = 8080;
@@ -21,194 +21,95 @@ app.use(express.json());
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
-async function saveTokenUsage(usage, userId, type) {
+
+
+async function createOutline(db, keywordPlanId, keywordId, titleId, userId) {
   try {
-    // Crear un nuevo documento en la colección "Tokenusage"
-    await db.collection('Tokenusage').add({
-      prompt_tokens: usage.prompt_tokens,
-      completion_tokens: usage.completion_tokens,
-      total_tokens: usage.total_tokens,
-      type: type,
-      userId: userId,
-      timestamp: admin.firestore.FieldValue.serverTimestamp()
-    });
-    
-    console.log('Token usage guardado exitosamente en Firebase.');
-  } catch (error) {
-    console.error('Error al guardar token usage en Firebase:', error);
-    throw error; // Puedes optar por lanzar el error para manejarlo en un nivel superior
-  }
-}
+    console.log("createoutline function started");
+    // Fetch the keyword plan from Firestore
+    const keywordPlanRef = db.collection('keywordsplans').doc(keywordPlanId);
+    const keywordPlanDoc = await keywordPlanRef.get();
+    console.log("Keyword Plan fetched", keywordPlanDoc.data());
 
-
-async function callOpenAI(apiKey, systemPrompt, userPrompt, userId) {
-  const url = "https://api.openai.com/v1/chat/completions";
-  const options = {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      "model": "gpt-3.5-turbo",
-      "messages": [
-        {"role": "system", "content": systemPrompt},
-        {"role": "user", "content": userPrompt}
-      ],
-      "temperature": 0.9
-    })
-  };
-
-  const fetch = (await import("node-fetch")).default;
-  try {
-    const response = await fetch(url, options);
-    const data = await response.json();
-    await saveTokenUsage(data.usage, userId, "blog-post");
-
-    if (data.choices && data.choices.length > 0 && data.choices[0].message) {
-      return data.choices[0].message.content.trim();
-    } else {
-      console.error('Respuesta inesperada de OpenAI:', data);
-      return '';
+    if (!keywordPlanDoc.exists) {
+      throw new Error('Keyword Plan not found');
     }
-  } catch (error) {
-    console.error('Error al llamar a OpenAI:', error);
-    return '';
-  }
-}
+    const keywordPlan = keywordPlanDoc.data();
 
-async function callOpenAIExtra(apiKey, systemPrompt, userPrompt, userId) {
-  const url = "https://api.openai.com/v1/chat/completions";
-  const options = {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      "model": "gpt-3.5-turbo-16k",
-      "messages": [
-        {"role": "system", "content": systemPrompt},
-        {"role": "user", "content": userPrompt}
-      ],
-      "temperature": 0.9
-    })
-  };
-
-  const fetch = (await import("node-fetch")).default;
-  try {
-    const response = await fetch(url, options);
-    const data = await response.json();
-    await saveTokenUsage(data.usage, userId, "blog-post");
-
-    if (data.choices && data.choices.length > 0 && data.choices[0].message) {
-      return data.choices[0].message.content.trim();
-    } else {
-      console.error('Respuesta inesperada de OpenAI:', data);
-      return '';
+    // Ensure that the keyword plan has a buyerpersonaid field
+    if (!keywordPlan.buyerpersonaid) {
+      throw new Error('Buyer persona ID not found in keyword plan');
     }
-  } catch (error) {
-    console.error('Error al llamar a OpenAI:', error);
-    return '';
+    const buyerPersonaId = keywordPlan.buyerpersonaid;
+
+    // Fetch the keyword from Firestore
+    const keywordRef = keywordPlanRef.collection('keywords').doc(keywordId);
+    const keywordDoc = await keywordRef.get();
+    console.log("Keyword fetched", keywordDoc.data());
+
+    if (!keywordDoc.exists) {
+      throw new Error('Keyword not found');
+    }
+    const keyword = keywordDoc.data();
+
+    // Fetch the title from Firestore
+    const titleRef = keywordRef.collection('titles').doc(titleId);
+    const titleDoc = await titleRef.get();
+    console.log("Title fetched", titleDoc.data());
+
+    if (!titleDoc.exists) {
+      throw new Error('Title not found');
+    }
+    const titleObj = titleDoc.data();
+
+    // Use getBuyerPersonaPrompts to fetch the buyer persona prompt
+    const { buyerpersona_prompt } = await getBuyerPersonaPrompts(db, buyerPersonaId);
+
+
+// Call OpenAI to generate the outline
+const outline = await CallOpenAIOutline(titleObj.title, keyword.keyword, buyerpersona_prompt, userId, db);
+
+// Check if outline is received properly and update Firestore
+if (outline && outline.length > 0) {
+  const titleRef = db.collection('keywordsplans').doc(keywordPlanId).collection('keywords').doc(keywordId).collection('titles').doc(titleId);
+  await titleRef.update({ outline: outline });
+
+  console.log('Outline successfully created and saved.');
+} else {
+  throw new Error('No outline received from OpenAI');
+}  } catch (error) {
+    console.error('Error al crear el outline:', error);
+    throw error; // Re-throw the error for handling at a higher level
   }
 }
 
-async function contentEditor(openaiKey, userPrompt, userId) {
-  try {
-    const systemPrompt = "Eres un editor SEO, te voy a dar un contenido de blog y quiero que me regreses el mismo contenido pero con etiquetas HTML <h2> y <h3>. También quiero que agregues negritas y itálicas para resaltar los textos importantes";
-    const response = await callOpenAIExtra(openaiKey, systemPrompt, userPrompt, userId);
-    return response;
-  } catch (error) {
-    console.error("Error al mejorar el contenido:", error);
-    throw error; // Re-throw the error after logging it
-  }
-}
-
-
-
-async function getOpenAIKey(db, userId) {
-  const businessRef = db.collection('Business').where('userId', '==', userId);
-  const businessSnapshot = await businessRef.get();
-  if (businessSnapshot.empty) {
-    throw new Error("No se encontró ningún documento de negocio con ese userId.");
-  }
-  const openaiKey = businessSnapshot.docs[0].data().openaikey;
-  if (!openaiKey) {
-    throw new Error("No se encontró la clave API de OpenAI para ese userId.");
-  }
-  return openaiKey;
-}
-
-async function getBuyerPersonaPrompts(db, buyerpersonaId) {
-  const buyerpersonaRef = db.collection('buyerpersonas').doc(buyerpersonaId);
-  const buyerpersonaDoc = await buyerpersonaRef.get();
-  if (!buyerpersonaDoc.exists) {
-    throw new Error("No se encontró ningún documento de buyer persona con ese ID.");
-  }
-  const buyerpersonaData = buyerpersonaDoc.data();
-  return {
-    buyerpersona_prompt: buyerpersonaData.buyerpersona_prompt,
-    content_prompt: buyerpersonaData.content_prompt,
-  };
-}
-
-async function getAllTitlesWithOutline(db, keywordPlanId) {
-  const titlesWithOutline = [];
-  const keywordsRef = db.collection(`keywordsplans/${keywordPlanId}/keywords`);
-  const keywordsSnapshot = await keywordsRef.get();
-  for (const keywordDoc of keywordsSnapshot.docs) {
-    const titlesRef = keywordsRef.doc(keywordDoc.id).collection('titles');
-    const titlesSnapshot = await titlesRef.where('outline', '!=', null).get();
-    for (const titleDoc of titlesSnapshot.docs) {
-      const titleData = titleDoc.data();
-      if (titleData.outline && (titleData.content === undefined || titleData.content === null)) { 
-        titlesWithOutline.push({
-          keywordId: keywordDoc.id,
-          titleId: titleDoc.id
-        });
+async function createAllOutlinesForPlan(db, keywordPlanId, userId) {
+  const keywordsWithTitles = await getKeywordsAndTitles(db, keywordPlanId);
+  for (const keyword of keywordsWithTitles) {
+    for (const title of keyword.titles) {
+      try {
+        // Check if outline already exists before creating it
+        if (!title.outline) {
+          await createOutline(db, keywordPlanId, keyword.id, title.id, userId);
+        }
+      } catch (error) {
+        console.error("Error al crear outline para el título", title.id, ":", error);
       }
     }
   }
-  return titlesWithOutline;
-}
-
-async function getTitleData(db, keywordPlanId, keywordId, titleId) {
-  const titleRef = db.collection(`keywordsplans/${keywordPlanId}/keywords/${keywordId}/titles`).doc(titleId);
-  const titleDoc = await titleRef.get();
-  if (!titleDoc.exists) {
-    throw new Error("No se encontró el título con el ID proporcionado.");
-  }
-  const titleData = titleDoc.data();
-  return titleData.title;
-}
-
-async function getKeywordAndTitleData(db, keywordPlanId, keywordId, titleId) {
-  const keywordRef = db.collection(`keywordsplans/${keywordPlanId}/keywords`).doc(keywordId);
-  const keywordDoc = await keywordRef.get();
-  if (!keywordDoc.exists) {
-    throw new Error("No se encontró el keyword con el ID proporcionado.");
-  }
-  const keywordData = keywordDoc.data();
-  const keyword = keywordData.keyword;
-
-  const titleRef = db.collection(`keywordsplans/${keywordPlanId}/keywords/${keywordId}/titles`).doc(titleId);
-  const titleDoc = await titleRef.get();
-  if (!titleDoc.exists) {
-    throw new Error("No se encontró el title con el ID proporcionado.");
-  }
-  const titleData = titleDoc.data();
-
-  return {
-    keyword,
-    title: titleData.title,
-    outline: titleData.outline
-  };
+  console.log("Outlines creados y guardados con éxito para el plan", keywordPlanId);
 }
 
 
+//CONTENTS CREATION
 async function createContentAndSave(db, userId, keywordPlanId, keywordId, titleId, openaiKey, systemPrompt, title, keyword, string_outline) {
-  const outline = JSON.parse(string_outline);
-
+  let outline;
+  try {
+    outline = JSON.parse(string_outline);
+  } catch (error) {
+    console.error("Error al parsear el outline:", error);
+    return; // Salir de la función si ocurre un error
+  }
   // Verificar que el objeto tiene la estructura esperada
   if (!Array.isArray(outline.subtitles)) {
     throw new Error("El outline no tiene una propiedad 'subtitles' que sea un array");
@@ -219,13 +120,13 @@ async function createContentAndSave(db, userId, keywordPlanId, keywordId, titleI
   for (const section of outline.subtitles) {
     console.log("creando subtitulo: ", section.h2)
     const userPrompt = `Redacta un contenido de blog con el título: ${title}. La keyword principal es: ${keyword}. Escribe únicamente el contenido para el subtitulo ${section.h2} que trata de ${section.description}. Incluye las siguientes subsecciones 1: ${section.h3_1}, 2: ${section.h3_2}, 3: ${section.h3_3}.`;
-    const openAIResponse = await callOpenAI(openaiKey, systemPrompt, userPrompt, userId);
+    const openAIResponse = await callOpenAI(openaiKey, systemPrompt, userPrompt, userId, db);
     contents.push(openAIResponse);
   }
 
   const titleContent = contents.join('\n\n');
   console.log("Estamos editando el contenido");
-  const editorResponse = await contentEditor(openaiKey, titleContent, userId);
+  const editorResponse = await contentEditor(openaiKey, titleContent, userId, db);
 
   console.log("Estamos guardando el contenido en la colección 'contents'");
   const contentDocRef = await db.collection('contents').add({
@@ -270,6 +171,25 @@ async function createContent(db, userId, keywordPlanId, keywordId, titleId) {
   await createContentAndSave(db, userId, keywordPlanId, keywordId, titleId, openaiKey, systemPrompt, title, keyword, outline);
 }
 
+async function createAllContentsForPlan(db, keywordPlanId, userId) {
+  const titlesWithOutline = await getAllTitlesWithOutline(db, keywordPlanId);
+  for (const { keywordId, titleId } of titlesWithOutline) {
+    try {
+      // Check if content already exists before creating it
+      const titleRef = db.collection(`keywordsplans/${keywordPlanId}/keywords/${keywordId}/titles`).doc(titleId);
+      const titleDoc = await titleRef.get();
+      if (!titleDoc.exists || titleDoc.data().contentId) {
+        continue; // Skip if content already exists
+      }
+      await createContent(db, userId, keywordPlanId, keywordId, titleId);
+    } catch (error) {
+      console.error("Error al crear contenido para el título", titleId, ":", error);
+    }
+  }
+  console.log("Contenido creado y guardado con éxito para el plan", keywordPlanId);
+}
+
+
 //ONE SINGLE CONTENT CREATION
 app.post("/createcontent", async (req, res) => {
   const { userId, keywordPlanId, keywordId, titleId } = req.query;
@@ -293,13 +213,84 @@ app.post("/createallcontent", async (req, res) => {
     setImmediate(async () => {
       const titlesWithOutline = await getAllTitlesWithOutline(db, keywordPlanId);
       for (const { keywordId, titleId } of titlesWithOutline) {
-        await createContent(db, userId, keywordPlanId, keywordId, titleId);
-      }
+        try {
+          await createContent(db, userId, keywordPlanId, keywordId, titleId);
+        } catch (error) {
+          console.error("Error al crear contenido para el título", titleId, ":", error);
+        }      }
       console.log("Contenido creado y guardado con éxito en segundo plano");
     });
   } catch (error) {
     console.error("Error:", error);
     // Nota: No estamos enviando una respuesta aquí porque ya enviamos una respuesta antes
   }
+});
+
+app.post("/createoutline", async (req, res) => {
+  console.log("Received request for /createoutline");
+  const { keywordPlanId, keywordId, titleId, userId } = req.query;
+  console.log("Query Params:", keywordPlanId, keywordId, titleId, userId);
+
+  try {
+    await createOutline(db, keywordPlanId, keywordId, titleId, userId);
+    res.status(200).send("Outline creado con éxito");
+  } catch (error) {
+    console.error("Error en /createoutline:", error);
+    res.status(500).send(error.message || "Error interno del servidor");
+  }
+});
+
+app.post("/createalloutline", async (req, res) => {
+  console.log("Received request for /createalloutline");
+  const { keywordPlanId, userId } = req.query;
+  try {
+    // Fetch all keywords and their titles for the keyword plan
+    const keywordsWithTitles = await getKeywordsAndTitles(db, keywordPlanId);
+
+    for (const keyword of keywordsWithTitles) {
+      for (const title of keyword.titles) {
+        // Check if outline already exists to avoid duplication
+        if (!title.outline) {
+          await createOutline(db, keywordPlanId, keyword.id, title.id, userId);
+        }
+      }
+    }
+    res.status(200).send("Todos los outlines han sido creados");
+  } catch (error) {
+    console.error("Error en /createalloutline:", error);
+    res.status(500).send("Error interno del servidor");
+  }
+});
+
+app.post("/runallcreation", async (req, res) => {
+  const DEFAULT_USER_ID = 'Trk9iS5OFeQhmaaEB4nedWWNkrs2';
+  const userId = req.query.userId || DEFAULT_USER_ID;
+
+  // Respond immediately
+  res.status(202).send("Proceso de creación iniciado");
+
+  // Process in the background
+  setImmediate(async () => {
+    try {
+      const keywordPlansSnapshot = await db.collection('keywordsplans').get();
+      for (const keywordPlanDoc of keywordPlansSnapshot.docs) {
+        const keywordPlanData = keywordPlanDoc.data();
+        const keywordPlanId = keywordPlanDoc.id;
+
+        if (keywordPlanData.All_Outline_Creation) {
+          console.log('Creating outlines for keywordPlanId:', keywordPlanId);
+          await createAllOutlinesForPlan(db, keywordPlanId, userId);
+        }
+
+        if (keywordPlanData.All_Content_Creation) {
+          console.log('Creating contents for keywordPlanId:', keywordPlanId);
+          await createAllContentsForPlan(db, keywordPlanId, userId);
+        }
+      }
+    } catch (error) {
+      console.error("Error en background processing /runallcreation:", error);
+      // Handle error, maybe log it or send a notification
+    }
+  });
 });
 
