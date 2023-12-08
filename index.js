@@ -1,6 +1,6 @@
 import express from "express";
 import admin from 'firebase-admin';
-import serviceAccount from './etc/secrets/contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json' assert { type: 'json' };
+import serviceAccount from '/etc/secrets/contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json' assert { type: 'json' };
 import cors from 'cors';
 import { callOpenAI, callOpenAIExtra, contentEditor, CallOpenAIOutline } from './openaiCompletitionFunctions.js'; // Import the functions
 import { getBuyerPersonaPrompts, getKeywordsAndTitles, getAllTitlesWithOutline, getKeywordAndTitleData } from './firebaseFunctions.js';
