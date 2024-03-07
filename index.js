@@ -1,9 +1,5 @@
 import express from "express";
 import admin from 'firebase-admin';
-// TEST
-import serviceAccount from './etc/secrets/contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json' assert { type: 'json' };
-// PRODUCTION
-//import serviceAccount from '/etc/secrets/contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json' assert { type: 'json' };
 import cors from 'cors';
 import { callOpenAI, callOpenAIExtra, contentEditor, CallOpenAIOutline } from './openaiCompletitionFunctions.js'; // Import the functions
 import { getBuyerPersonaPrompts, getKeywordsAndTitles, getAllTitlesWithOutline, getKeywordAndTitleData } from './firebaseFunctions.js';
@@ -13,18 +9,36 @@ const app = express();
 const PORT = 8080;
 app.use(cors());
 
+// Determine the correct path based on the environment
+const serviceAccountPath = process.env.NODE_ENV === 'production'
+  ? '/etc/secrets/contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json'
+  : './etc/secrets/contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json';
 
-//const serviceAccountPath = path.join(__dirname, 'contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json');
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
+// Use a dynamic import to load the service account based on the environment
+const initializeFirebaseAdmin = async () => {
+  try {
+    const serviceAccount = await import(serviceAccountPath);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount.default)
+    });
+  } catch (error) {
+    console.error("Failed to initialize Firebase Admin SDK:", error);
+    // Handle error (e.g., exit the process or throw an exception)
+  }
+};
+
+initializeFirebaseAdmin();
+
+// Your express app and route definitions here
+
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
 
-const db = admin.firestore();
-app.use(express.json());
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-
+app.get("/", (req, res) => {
+  res.send("Server is successfully running!");
+});
 
 async function createOutline(db, keywordPlanId, keywordId, titleId, userId) {
   try {
