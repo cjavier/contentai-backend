@@ -1,7 +1,7 @@
 import express from "express";
 import admin from 'firebase-admin';
 import cors from 'cors';
-import { callOpenAI, callOpenAIExtra, contentEditor, CallOpenAIOutline } from './openaiCompletitionFunctions.js'; // Import the functions
+import { callOpenAI, callOpenAIExtra, LangtailSubtitles, langtailEditor, CallOpenAIOutline } from './openaiCompletitionFunctions.js'; // Import the functions
 import { getBuyerPersonaPrompts, getKeywordsAndTitles, getAllTitlesWithOutline, getKeywordAndTitleData } from './firebaseFunctions.js';
 import { getOpenAIKey } from './openaiAuth.js';
 
@@ -9,6 +9,7 @@ const app = express();
 const PORT = 8080;
 app.use(cors());
 
+let db;
 // Determine the correct path based on the environment
 const serviceAccountPath = process.env.NODE_ENV === 'production'
   ? '/etc/secrets/contentai-3f684-firebase-adminsdk-roi76-79cb9813cf.json'
@@ -17,20 +18,20 @@ const serviceAccountPath = process.env.NODE_ENV === 'production'
 // Use a dynamic import to load the service account based on the environment
 const initializeFirebaseAdmin = async () => {
   try {
-    const serviceAccount = await import(serviceAccountPath);
+    const serviceAccount = await import(serviceAccountPath, { assert: { type: "json" } });
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount.default)
     });
+    db = admin.firestore(); // Initialize Firestore after Firebase Admin
+    console.log("Firebase Admin and Firestore initialized successfully.");
   } catch (error) {
     console.error("Failed to initialize Firebase Admin SDK:", error);
     // Handle error (e.g., exit the process or throw an exception)
   }
 };
-
-initializeFirebaseAdmin();
+await initializeFirebaseAdmin();
 
 // Your express app and route definitions here
-
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
@@ -43,8 +44,10 @@ app.get("/", (req, res) => {
 async function createOutline(db, keywordPlanId, keywordId, titleId, userId) {
   try {
     console.log("createoutline function started");
+    console.log("ID Verification:", { keywordPlanId, keywordId, titleId });
     // Fetch the keyword plan from Firestore
     const keywordPlanRef = db.collection('keywordsplans').doc(keywordPlanId);
+    console.log("Referencia del Plan de Palabras Clave:", keywordPlanRef.path);
     const keywordPlanDoc = await keywordPlanRef.get();
     console.log("Keyword Plan fetched", keywordPlanDoc.data());
 
@@ -128,22 +131,28 @@ async function createContentAndSave(db, userId, keywordPlanId, keywordId, titleI
     return; // Salir de la función si ocurre un error
   }
   // Verificar que el objeto tiene la estructura esperada
-  if (!Array.isArray(outline.subtitles)) {
-    throw new Error("El outline no tiene una propiedad 'subtitles' que sea un array");
+  if (!Array.isArray(outline.h2)) {
+    throw new Error("El outline no tiene una propiedad 'h2' que sea un array");
   }
-  //console.log("Outline: ", outline);
 
   const contents = [];
-  for (const section of outline.subtitles) {
-    console.log("creando subtitulo: ", section.h2)
-    const userPrompt = `Redacta un contenido de blog con el título: ${title}. La keyword principal es: ${keyword}. Escribe únicamente el contenido para el subtitulo ${section.h2} que trata de ${section.description}. Incluye las siguientes subsecciones 1: ${section.h3_1}, 2: ${section.h3_2}, 3: ${section.h3_3}.`;
-    const openAIResponse = await callOpenAI(openaiKey, systemPrompt, userPrompt, userId, db);
+  for (const section of outline.h2) {
+    console.log("Creando contenido para subtitulo: ", section.titulo);
+    let userPrompt = `Redacta un contenido de blog con el título: ${title}. La keyword principal es: ${keyword}. Por ahora solo escribe únicamente el contenido para el subtítulo ${section.titulo}.`;
+
+    // Iterar sobre cada h3 si están presentes y agregarlos al prompt
+    if (section.h3 && section.h3.length > 0) {
+      const subSections = section.h3.map((sub, index) => `${index + 1}: ${sub.titulo}`).join(", ");
+      userPrompt += ` Incluye las siguientes subsecciones: ${subSections}.`;
+    }
+
+    const openAIResponse = await LangtailSubtitles(systemPrompt, userPrompt, userId, db);
     contents.push(openAIResponse);
   }
 
   const titleContent = contents.join('\n\n');
   console.log("Estamos editando el contenido");
-  const editorResponse = await contentEditor(openaiKey, titleContent, userId, db);
+  const editorResponse = await langtailEditor(titleContent, userId, db);
 
   console.log("Estamos guardando el contenido en la colección 'contents'");
   const contentDocRef = await db.collection('contents').add({
@@ -174,7 +183,7 @@ async function createContent(db, userId, keywordPlanId, keywordId, titleId) {
   const buyerpersonaId = keywordPlanDoc.data().buyerpersonaid;
   // Obtener los prompts del buyer persona
   const { buyerpersona_prompt, content_prompt } = await getBuyerPersonaPrompts(db, buyerpersonaId);
-  const systemPrompt = `${buyerpersona_prompt}. Los detalles importantes son que ${content_prompt}. No saludes a los lectores, no te despidas de ellos ni firmes los textos, No pongas ningun texto que requiera ser cambiado por el usuario.`;
+  const systemPrompt = `${buyerpersona_prompt}. Los detalles importantes son que ${content_prompt}. `;
   // Obtener la data del keyword y del title
   const { keyword, title, outline } = await getKeywordAndTitleData(db, keywordPlanId, keywordId, titleId);
 
@@ -205,44 +214,11 @@ async function createAllContentsForPlan(db, keywordPlanId, userId) {
   }
   console.log("Contenido creado y guardado con éxito para el plan", keywordPlanId);
 }
+//
+// ENDPOINTS
+//
 
-
-//ONE SINGLE CONTENT CREATION
-app.post("/createcontent", async (req, res) => {
-  const { userId, keywordPlanId, keywordId, titleId } = req.query;
-  try {
-    await createContent(db, userId, keywordPlanId, keywordId, titleId);
-    res.status(200).send("Contenido creado y guardado con éxito");
-  } catch (error) {
-    console.error("Error:", error);
-    res.status(500).send(error.message || "Error interno del servidor");
-  }
-});
-
-//ALL CONTENT IN A KEYWORDSPALN CREATION
-app.post("/createallcontent", async (req, res) => {
-  const { userId, keywordPlanId } = req.query;
-  try {
-    // Responder inmediatamente al cliente
-    res.status(200).send("Los contenidos se están produciendo en el servidor, ya puedes cerrar la ventana");
-
-    // Iniciar la tarea en segundo plano
-    setImmediate(async () => {
-      const titlesWithOutline = await getAllTitlesWithOutline(db, keywordPlanId);
-      for (const { keywordId, titleId } of titlesWithOutline) {
-        try {
-          await createContent(db, userId, keywordPlanId, keywordId, titleId);
-        } catch (error) {
-          console.error("Error al crear contenido para el título", titleId, ":", error);
-        }      }
-      console.log("Contenido creado y guardado con éxito en segundo plano");
-    });
-  } catch (error) {
-    console.error("Error:", error);
-    // Nota: No estamos enviando una respuesta aquí porque ya enviamos una respuesta antes
-  }
-});
-
+// Crea un solo outline desde la interfaz, cuando dan click en crear un outine especifico este es el endpoint que se llama
 app.post("/createoutline", async (req, res) => {
   console.log("Received request for /createoutline");
   const { keywordPlanId, keywordId, titleId, userId } = req.query;
@@ -256,29 +232,19 @@ app.post("/createoutline", async (req, res) => {
     res.status(500).send(error.message || "Error interno del servidor");
   }
 });
-
-app.post("/createalloutline", async (req, res) => {
-  console.log("Received request for /createalloutline");
-  const { keywordPlanId, userId } = req.query;
+// Crea un solo contenido desde la interfaz, cuando dan click en crear un contenido especifico este es el endpoint que se llama
+app.post("/createcontent", async (req, res) => {
+  const { userId, keywordPlanId, keywordId, titleId } = req.query;
   try {
-    // Fetch all keywords and their titles for the keyword plan
-    const keywordsWithTitles = await getKeywordsAndTitles(db, keywordPlanId);
-
-    for (const keyword of keywordsWithTitles) {
-      for (const title of keyword.titles) {
-        // Check if outline already exists to avoid duplication
-        if (!title.outline) {
-          await createOutline(db, keywordPlanId, keyword.id, title.id, userId);
-        }
-      }
-    }
-    res.status(200).send("Todos los outlines han sido creados");
+    await createContent(db, userId, keywordPlanId, keywordId, titleId);
+    res.status(200).send("Contenido creado y guardado con éxito");
   } catch (error) {
-    console.error("Error en /createalloutline:", error);
-    res.status(500).send("Error interno del servidor");
+    console.error("Error:", error);
+    res.status(500).send(error.message || "Error interno del servidor");
   }
 });
 
+// Crea todos los outlines y contenidos con la bandera true
 app.post("/runallcreation", async (req, res) => {
   const DEFAULT_USER_ID = 'Trk9iS5OFeQhmaaEB4nedWWNkrs2';
   const userId = req.query.userId || DEFAULT_USER_ID;

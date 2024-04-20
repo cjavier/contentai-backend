@@ -1,7 +1,16 @@
 import admin from 'firebase-admin';
 import fetch from 'node-fetch';
 import { getOpenAIKey } from './openaiAuth.js';
+import { LangtailPrompts } from "langtail";
+import dotenv from 'dotenv';
 
+dotenv.config();
+let LangtailAPIKEY = process.env.LANGTAIL_API_KEY;
+const environment = process.env.NODE_ENV === 'production' ? 'production' : 'staging';
+
+function constructLangtailUrl(projectPath) {
+  return `https://api.langtail.com/improvitz-uGMbkj/my-project/${projectPath}/${environment}`;
+}
 
 async function saveTokenUsage(usage, userId, type, db) {
     try {
@@ -100,80 +109,120 @@ export async function callOpenAIExtra(apiKey, systemPrompt, userPrompt, userId, 
     }
   }
 
-  export async function contentEditor(openaiKey, userPrompt, userId, db) {
-    try {
-      const systemPrompt = "Eres un editor SEO, te voy a dar un contenido de blog y quiero que me regreses el mismo contenido pero con etiquetas HTML <h2> y <h3>. También quiero que agregues negritas y itálicas para resaltar los textos importantes";
-      const response = await callOpenAIExtra(openaiKey, systemPrompt, userPrompt, userId, db);
-      return response;
-    } catch (error) {
-      console.error("Error al mejorar el contenido:", error);
-      throw error; // Re-throw the error after logging it
-    }
-  }
-
 
   export async function CallOpenAIOutline(title, keyword, buyerpersona_prompt, userId, db)  {
     const systemPrompt = buyerpersona_prompt;
-    const userPrompt = `Crea un outline de por lo menos 5 subtitulos para un contenido con el título: ${title}. La keyword principal es: ${keyword}. No pongas nada relacionado a ejemplos que requieran de información especifica del negocio ni casos de éxito particulares ni de ejemplos particulares.`;
-      const apiKey = await getOpenAIKey(db, userId);
-      const url = "https://api.openai.com/v1/chat/completions";
-      const schema = {
-        type: "object",
-        properties: {
-            subtitles: {
-                type: "array",
-                description: "Lista de 5 subtítulos optimizados para SEO",
-                items: {
-                    type: "object",
-                    properties: {
-                        h2: { type: "string", description: "Texto del subtítulo" },
-                        description: { type: "string", description: "Descripción del contenido que puede contener el subtitulo para apoyar al SEO" },
-                        h3_1: { type: "string", description: "Posible subtitulo secundario para SEO" },
-                        h3_2: { type: "string", description: "Posible subtitulo secundario para SEO" },
-                        h3_3: { type: "string", description: "Posible subtitulo secundario para SEO" },
-                    },
-                    required: ["text", "description", "h3_1", "h3_2", "h3_3"]
-                }
-            }
-        },
-        required: ["subtitles"]
-    };
-    
-    
-  
-      const options = {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${apiKey}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          "model": "gpt-3.5-turbo",
-          "messages": [
-            {"role": "system", "content": systemPrompt},
-            {"role": "user", "content": userPrompt}
-          ],
-          functions: [
-            {name: "get_movie_data", "parameters": schema}
-  
-          ],
-          function_call: {name: "get_movie_data"},
-          "temperature": 0.7
-        })
-      };
+    const messages = [
+      {
+          role: "system",
+          content: systemPrompt
+      },
+      {
+          role: "user",
+          content: `Crea un outline de por lo menos 5 subtitulos para un contenido con el título: ${title}. La keyword principal es: ${keyword}. No pongas nada relacionado a ejemplos que requieran de información especifica del negocio ni casos de éxito particulares ni de ejemplos particulares.`
+      }
+  ];
+  const options = {
+      method: 'POST',
+      headers: {
+          'X-API-Key': LangtailAPIKEY,
+          'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+          stream: false,
+          user: userId,
+          doNotRecord: false,
+          messages: messages      })
+  };
+
+  const url = constructLangtailUrl('create-content-outline');
     
       try {
         const response = await fetch(url, options);
         const data = await response.json();
-        let outline = data.choices[0].message.function_call.arguments;
-        console.log(outline);
-        console.log(data.usage);
+        //console.log("Respuesta de LangTail:", data);
+        let outline = data.choices[0].message.content;
+        console.log("Outline: ",outline);
+        console.log("Token Usage: ", data.usage);
         await saveTokenUsage(data.usage, userId, "outline", db);
-  
-      
-  
-  
       return outline;
+      } catch (error) {
+        console.error('Error al llamar a OpenAI:', error);
+        return [];
+      }
+  };
+
+  export async function LangtailSubtitles(systemPrompt, userPrompt, userId, db)  {
+    const messages = [
+      {
+          role: "system",
+          content: systemPrompt
+      },
+      {
+          role: "user",
+          content: userPrompt
+      }
+  ];
+  const options = {
+      method: 'POST',
+      headers: {
+          'X-API-Key': LangtailAPIKEY,
+          'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+          stream: false,
+          user: userId,
+          doNotRecord: false,
+          messages: messages      })
+  };
+
+  const url = constructLangtailUrl('create-content-subtitle');
+
+      try {
+        const response = await fetch(url, options);
+        const data = await response.json();
+        //console.log("Respuesta de LangTail:", data);
+        let content = data.choices[0].message.content;
+        //console.log("Contenido del Subtitulo: ",content);
+        console.log("Token Usage: ", data.usage);
+        await saveTokenUsage(data.usage, userId, "content", db);
+      return content;
+      } catch (error) {
+        console.error('Error al llamar a OpenAI:', error);
+        return [];
+      }
+  };
+
+  export async function langtailEditor(content, userId, db)  {
+    const messages = [
+      {
+          role: "user",
+          content: content
+      }
+  ];
+  const options = {
+      method: 'POST',
+      headers: {
+          'X-API-Key': LangtailAPIKEY,
+          'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+          stream: false,
+          user: userId,
+          doNotRecord: false,
+          messages: messages      })
+  };
+
+  const url = constructLangtailUrl('content-editor');
+
+      try {
+        const response = await fetch(url, options);
+        const data = await response.json();
+        //console.log("Respuesta de LangTail:", data);
+        let content = data.choices[0].message.content;
+        console.log("Token Usage: ", data.usage);
+        await saveTokenUsage(data.usage, userId, "content", db);
+      return content;
       } catch (error) {
         console.error('Error al llamar a OpenAI:', error);
         return [];
