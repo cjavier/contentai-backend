@@ -6,6 +6,11 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 let LangtailAPIKEY = process.env.LANGTAIL_API_KEY;
+let OpenAIAPIKEY = process.env.OPENAI_API_KEY;
+const OpenaiOutlineModel = 'gpt-4o-mini';
+const OpenaiContentModel = 'gpt-4o-mini';
+const OpenaiEditorModel = 'gpt-4o-mini';
+
 const environment = process.env.NODE_ENV === 'production' ? 'production' : 'staging';
 
 function constructLangtailUrl(projectPath) {
@@ -110,121 +115,152 @@ export async function callOpenAIExtra(apiKey, systemPrompt, userPrompt, userId, 
   }
 
 
-  export async function CallOpenAIOutline(title, keyword, buyerpersona_prompt, userId, db)  {
+  export async function CallOpenAIOutline(title, keyword, buyerpersona_prompt, userId, db) {
     const systemPrompt = buyerpersona_prompt;
+    const instructionPrompt = `
+    Crea el outline de un contenido en formato JSON que deberá tener por lo menos 4 subtítulos h2 y entre 1 y 3 subtítulos h3. La estructura del JSON debe ser:
+    {
+      "h1": "Título Principal",
+      "h2": [
+        {
+          "titulo": "Subtítulo de Nivel 2",
+          "h3": [
+            {
+              "titulo": "Subtítulo de Nivel 3"
+            }
+          ]
+        }
+      ]
+    }
+
+    No pongas nada relacionado a ejemplos que requieran de información específica, casos de éxito ni ejemplos particulares.`;
     const messages = [
-      {
+        {
+            role: "system",
+            content: instructionPrompt
+        },
+        {
           role: "system",
           content: systemPrompt
       },
-      {
-          role: "user",
-          content: `Crea un outline de por lo menos 5 subtitulos para un contenido con el título: ${title}. La keyword principal es: ${keyword}. No pongas nada relacionado a ejemplos que requieran de información especifica del negocio ni casos de éxito particulares ni de ejemplos particulares.`
-      }
-  ];
-  const options = {
-      method: 'POST',
-      headers: {
-          'X-API-Key': LangtailAPIKEY,
-          'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-          stream: false,
-          user: userId,
-          doNotRecord: false,
-          messages: messages      })
-  };
-
-  const url = constructLangtailUrl('create-content-outline');
+        {
+            role: "user",
+            content: `Crea un outline de por lo menos 5 subtítulos para un contenido con el título: ${title}. La keyword principal es: ${keyword}. No pongas nada relacionado a ejemplos que requieran de información específica del negocio ni casos de éxito particulares ni de ejemplos particulares.`
+        }
+    ];
     
-      try {
+    const options = {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${OpenAIAPIKEY}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            model: OpenaiOutlineModel,
+            response_format: {
+              'type': "json_object"},
+            messages: messages
+        })
+    };
+
+    const url = 'https://api.openai.com/v1/chat/completions';
+    
+    try {
         const response = await fetch(url, options);
         const data = await response.json();
-        //console.log("Respuesta de LangTail:", data);
+        console.log("Respuesta de OpenAI:", data);
         let outline = data.choices[0].message.content;
-        console.log("Outline: ",outline);
+        console.log("Outline: ", outline);
         console.log("Token Usage: ", data.usage);
-        await saveTokenUsage(data.usage, userId, "outline", db);
-      return outline;
-      } catch (error) {
+        return outline;
+    } catch (error) {
         console.error('Error al llamar a OpenAI:', error);
         return [];
-      }
-  };
+    }
+};
 
-  export async function LangtailSubtitles(systemPrompt, userPrompt, userId, db)  {
-    const messages = [
+export async function OpenaiCreateSubtitles(systemPrompt, userPrompt) {
+  const instructionContentPrompt = "Te van a pedir que redactes un fragmento de un contenido de blog, este deberá de tener más de 700 palabras. No saludes a los lectores, no te despidas de ellos, no firmes los textos, No pongas ningun texto que requiera ser cambiado por el usuario.";
+  const messages = [
       {
           role: "system",
-          content: systemPrompt
+          content: instructionContentPrompt
       },
+      {
+        role: "system",
+        content: systemPrompt
+    },
       {
           role: "user",
           content: userPrompt
       }
   ];
+  
   const options = {
       method: 'POST',
       headers: {
-          'X-API-Key': LangtailAPIKEY,
+          'Authorization': `Bearer ${OpenAIAPIKEY}`,
           'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-          stream: false,
-          user: userId,
-          doNotRecord: false,
-          messages: messages      })
+          model: OpenaiContentModel,
+          messages: messages
+      })
   };
 
-  const url = constructLangtailUrl('create-content-subtitle');
-
-      try {
-        const response = await fetch(url, options);
-        const data = await response.json();
-        //console.log("Respuesta de LangTail:", data);
-        let content = data.choices[0].message.content;
-        //console.log("Contenido del Subtitulo: ",content);
-        console.log("Token Usage: ", data.usage);
-        await saveTokenUsage(data.usage, userId, "content", db);
+  const url = 'https://api.openai.com/v1/chat/completions';
+  
+  try {
+      const response = await fetch(url, options);
+      const data = await response.json();
+      //console.log("Respuesta de OpenAI:", data);
+      let content = data.choices[0].message.content;
+      //console.log("Contenido del Subtitulo: ",content);
+      console.log("Token Usage: ", data.usage);
       return content;
-      } catch (error) {
-        console.error('Error al llamar a OpenAI:', error);
-        return [];
-      }
-  };
+  } catch (error) {
+      console.error('Error al llamar a OpenAI:', error);
+      return [];
+  }
+};
 
-  export async function langtailEditor(content, userId, db)  {
+  export async function openAIEditor(content) {
+    const systemPrompt = "Eres un editor de contenido experto en SEO, te voy a dar un contenido de blog y quiero que me regreses el mismo contenido sin resumir, con una mayor cantidad de palabras, deberás editarlo de manera que la conexión entre los temas sea coherente, hazlo de manera que no tengas que eliminar palabras, agrega palabras siempre que puedas, asegurate que el contenido tenga una introducción y una conclusión atractivas y además el contenido deberá contar con etiquetas <h2>, <h3> y <p>. También quiero que agregues negritas y itálicas para resaltar los textos importantes usando <b> y también <i>. No agregues la etiqueta de HTML al inicio ni al final ni tampoco agregues <div>.";
+    
     const messages = [
-      {
-          role: "user",
-          content: content
-      }
-  ];
-  const options = {
-      method: 'POST',
-      headers: {
-          'X-API-Key': LangtailAPIKEY,
-          'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-          stream: false,
-          user: userId,
-          doNotRecord: false,
-          messages: messages      })
-  };
+        {
+            role: "system",
+            content: systemPrompt
+        },
+        {
+            role: "user",
+            content: content
+        }
+    ];
+    
+    const options = {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${OpenAIAPIKEY}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            model: OpenaiEditorModel,
+            messages: messages
+        })
+    };
 
-  const url = constructLangtailUrl('content-editor');
-
-      try {
+    const url = 'https://api.openai.com/v1/chat/completions';
+    
+    try {
         const response = await fetch(url, options);
         const data = await response.json();
-        //console.log("Respuesta de LangTail:", data);
-        let content = data.choices[0].message.content;
+        //console.log("Respuesta de OpenAI:", data);
+        let editedContent = data.choices[0].message.content;
         console.log("Token Usage: ", data.usage);
-        await saveTokenUsage(data.usage, userId, "content", db);
-      return content;
-      } catch (error) {
+        return editedContent;
+    } catch (error) {
         console.error('Error al llamar a OpenAI:', error);
         return [];
-      }
-  };
+    }
+};

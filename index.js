@@ -1,7 +1,7 @@
 import express from "express";
 import admin from 'firebase-admin';
 import cors from 'cors';
-import { callOpenAI, callOpenAIExtra, LangtailSubtitles, langtailEditor, CallOpenAIOutline } from './openaiCompletitionFunctions.js'; // Import the functions
+import { OpenaiCreateSubtitles, openAIEditor, CallOpenAIOutline } from './openaiCompletitionFunctions.js'; // Import the functions
 import { getBuyerPersonaPrompts, getKeywordsAndTitles, getAllTitlesWithOutline, getKeywordAndTitleData } from './firebaseFunctions.js';
 import { getOpenAIKey } from './openaiAuth.js';
 
@@ -146,13 +146,13 @@ async function createContentAndSave(db, userId, keywordPlanId, keywordId, titleI
       userPrompt += ` Incluye las siguientes subsecciones: ${subSections}.`;
     }
 
-    const openAIResponse = await LangtailSubtitles(systemPrompt, userPrompt, userId, db);
+    const openAIResponse = await OpenaiCreateSubtitles(systemPrompt, userPrompt, userId, db);
     contents.push(openAIResponse);
   }
 
   const titleContent = contents.join('\n\n');
   console.log("Estamos editando el contenido");
-  const editorResponse = await langtailEditor(titleContent, userId, db);
+  const editorResponse = await openAIEditor(titleContent, userId, db);
 
   console.log("Estamos guardando el contenido en la colección 'contents'");
   const contentDocRef = await db.collection('contents').add({
