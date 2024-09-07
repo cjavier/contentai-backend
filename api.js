@@ -709,11 +709,12 @@ router.get('/contents/:id', async (req, res) => {
 // PUT - Actualizar un contenido específico
 router.put('/contents/:id', async (req, res) => {
   const { id } = req.params;
-  const { content, title, category, userId, keywordId, titleId, keywordPlanId } = req.body;
+  const { content, published, title, category, userId, keywordId, titleId, keywordPlanId } = req.body;
 
   try {
     const updatedContent = await Content.query().patchAndFetchById(id, {
       content,
+      published,
       title,
       category,
       userId,

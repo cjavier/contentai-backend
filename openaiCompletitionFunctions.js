@@ -168,10 +168,10 @@ export async function callOpenAIExtra(apiKey, systemPrompt, userPrompt, userId, 
     try {
         const response = await fetch(url, options);
         const data = await response.json();
-        console.log("Respuesta de OpenAI:", data);
+        //console.log("Respuesta de OpenAI:", data);
         let outline = data.choices[0].message.content;
-        console.log("Outline: ", outline);
-        console.log("Token Usage: ", data.usage);
+        //console.log("Outline: ", outline);
+        //console.log("Token Usage: ", data.usage);
         return outline;
     } catch (error) {
         console.error('Error al llamar a OpenAI:', error);
@@ -216,7 +216,7 @@ export async function OpenaiCreateSubtitles(systemPrompt, userPrompt) {
       //console.log("Respuesta de OpenAI:", data);
       let content = data.choices[0].message.content;
       //console.log("Contenido del Subtitulo: ",content);
-      console.log("Token Usage: ", data.usage);
+      //console.log("Token Usage: ", data.usage);
       return content;
   } catch (error) {
       console.error('Error al llamar a OpenAI:', error);
@@ -257,7 +257,7 @@ export async function OpenaiCreateSubtitles(systemPrompt, userPrompt) {
         const data = await response.json();
         //console.log("Respuesta de OpenAI:", data);
         let editedContent = data.choices[0].message.content;
-        console.log("Token Usage: ", data.usage);
+       // console.log("Token Usage: ", data.usage);
         return editedContent;
     } catch (error) {
         console.error('Error al llamar a OpenAI:', error);
