@@ -7,7 +7,7 @@ const app = express();
 const PORT = 8000;
 
 // Middleware global
-app.use(cors());
+app.use(cors({ origin: 'https://aicontentcreator.improvitz.com/' }));
 app.use(express.json());
 
 // Usar los routers
