@@ -6,8 +6,10 @@ import openaiRouter from './api-openai.js';
 const app = express();
 const PORT = 8000;
 
-// Middleware global
-app.use(cors({ origin: 'https://aicontentcreator.improvitz.com/' }));
+// Middleware global restringido a localhost y https://aicontentcreator.improvitz.com/
+//app.use(cors({ origin: 'http://localhost:3000' }));
+//app.use(cors({ origin: 'https://aicontentcreator.improvitz.com' }));
+app.use(cors());
 app.use(express.json());
 
 // Usar los routers

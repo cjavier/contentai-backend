@@ -6,6 +6,7 @@ import Keyword from './Models/keyword.js';
 import Title from './Models/Title.js';
 import BuyerPersona from './Models/BuyerPerson.js';
 import { OpenaiCreateSubtitles, openAIEditor, CallOpenAIOutline } from './openaiCompletitionFunctions.js'; 
+import { transaction } from 'objection';
 
 const router = express.Router();
 
@@ -36,7 +37,6 @@ router.post('/create-outline', async (req, res) => {
 
     // Fetch the keyword using Objection.js
     const keyword = await Keyword.query().findById(keywordId);
-
 
     if (!keyword || keyword.keywordplanid !== keywordPlanId) {
       return res.status(404).json({ msg: 'Keyword not found or does not belong to the specified Keyword Plan' });
@@ -99,78 +99,84 @@ router.post('/create-content', async (req, res) => {
     res.status(200).json({ msg: 'Datos recibidos. El proceso de creación de contenido se está ejecutando en segundo plano.' });
 
     // Continuar con la creación de contenido en segundo plano
-    const titleRecord = await Title.query().findById(titleId);
-    if (!titleRecord) {
-      console.error('Título no encontrado');
-      return;
-    }
-    const { title, outline } = titleRecord;
-
-    const keywordRecord = await Keyword.query().findById(keywordId);
-    if (!keywordRecord) {
-      console.error('Keyword no encontrada');
-      return;
-    }
-    const { keyword } = keywordRecord;
-
-    const keywordPlanRecord = await KeywordPlan.query().findById(keywordPlanId);
-    if (!keywordPlanRecord) {
-      console.error('Keyword Plan no encontrado');
-      return;
-    }
-    const { buyerpersonaId } = keywordPlanRecord;
-
-    const buyerPersonaRecord = await BuyerPersona.query().findById(buyerpersonaId);
-    if (!buyerPersonaRecord) {
-      console.error('Buyer Persona no encontrado');
-      return;
-    }
-    const { content_prompt } = buyerPersonaRecord;
-    const systemPrompt = content_prompt;
-
-    let parsedOutline;
-    try {
-      parsedOutline = JSON.parse(outline);
-    } catch (error) {
-      console.error('Error al parsear el outline:', error);
-      return;
-    }
-
-    if (!Array.isArray(parsedOutline.h2)) {
-      console.error("El outline no tiene una propiedad 'h2' que sea un array");
-      return;
-    }
-
-    const contents = [];
-    for (const section of parsedOutline.h2) {
-      console.log('Creando contenido para subtítulo: ', section.titulo);
-      let userPrompt = `Redacta un contenido de blog con el título: ${title}. La keyword principal es: ${keyword}. Por ahora solo escribe únicamente el contenido para el subtítulo ${section.titulo}.`;
-
-      if (section.h3 && section.h3.length > 0) {
-        const subSections = section.h3.map((sub, index) => `${index + 1}: ${sub.titulo}`).join(', ');
-        userPrompt += ` Incluye las siguientes subsecciones: ${subSections}.`;
+    await transaction(Content.knex(), async (trx) => {
+      const existingContent = await Content.query(trx).where('titleId', titleId).first();
+      if (existingContent) {
+        console.log('Contenido ya existente para el título:', titleId);
+        return;
       }
 
-      const openAIResponse = await OpenaiCreateSubtitles(systemPrompt, userPrompt);
-      contents.push(openAIResponse);
-    }
+      const titleRecord = await Title.query(trx).findById(titleId);
+      if (!titleRecord) {
+        console.error('Título no encontrado');
+        return;
+      }
+      const { title, outline } = titleRecord;
 
-    const titleContent = contents.join('\n\n');
-    const editorResponse = await openAIEditor(titleContent, userId);
-    console.log("the title of the content is ",title)
+      const keywordRecord = await Keyword.query(trx).findById(keywordId);
+      if (!keywordRecord) {
+        console.error('Keyword no encontrada');
+        return;
+      }
+      const { keyword } = keywordRecord;
 
-    const newContent = await Content.query().insert({
-      userId,
-      keywordPlanId,
-      keywordId,
-      titleId,
-      contenttitle: title,
-      content: editorResponse,
+      const keywordPlanRecord = await KeywordPlan.query(trx).findById(keywordPlanId);
+      if (!keywordPlanRecord) {
+        console.error('Keyword Plan no encontrado');
+        return;
+      }
+      const { buyerpersonaId } = keywordPlanRecord;
+
+      const buyerPersonaRecord = await BuyerPersona.query(trx).findById(buyerpersonaId);
+      if (!buyerPersonaRecord) {
+        console.error('Buyer Persona no encontrado');
+        return;
+      }
+      const { content_prompt } = buyerPersonaRecord;
+      const systemPrompt = content_prompt;
+
+      let parsedOutline;
+      try {
+        parsedOutline = JSON.parse(outline);
+      } catch (error) {
+        console.error('Error al parsear el outline:', error);
+        return;
+      }
+
+      if (!Array.isArray(parsedOutline.h2)) {
+        console.error("El outline no tiene una propiedad 'h2' que sea un array");
+        return;
+      }
+
+      const contents = await Promise.all(parsedOutline.h2.map(async (section) => {
+        console.log('Creando contenido para subtítulo: ', section.titulo);
+        let userPrompt = `Redacta un contenido de blog con el título: ${title}. La keyword principal es: ${keyword}. Por ahora solo escribe únicamente el contenido para el subtítulo ${section.titulo}.`;
+
+        if (section.h3 && section.h3.length > 0) {
+          const subSections = section.h3.map((sub, index) => `${index + 1}: ${sub.titulo}`).join(', ');
+          userPrompt += ` Incluye las siguientes subsecciones: ${subSections}.`;
+        }
+
+        return await OpenaiCreateSubtitles(systemPrompt, userPrompt);
+      }));
+
+      const titleContent = contents.join('\n\n');
+      const editorResponse = await openAIEditor(titleContent, userId);
+      console.log("the title of the content is ", title);
+
+      const newContent = await Content.query(trx).insert({
+        userId,
+        keywordPlanId,
+        keywordId,
+        titleId,
+        contenttitle: title,
+        content: editorResponse,
+      });
+
+      await Title.query(trx).patchAndFetchById(titleId, { contentid: newContent.id });
+
+      console.log('Contenido creado y actualizado en segundo plano.');
     });
-
-    await Title.query().patchAndFetchById(titleId, { contentid: newContent.id });
-
-    console.log('Contenido creado y actualizado en segundo plano.');
 
   } catch (error) {
     console.error('Error creando contenido:', error);
@@ -281,7 +287,8 @@ router.get('/all-content-creation', async (req, res) => {
 
         for (const titleObj of titles) {
           // Verificar si el título ya tiene un contenido
-          if (await Content.query().where('titleId', titleObj.id).first()) {
+          const existingContent = await Content.query().where('titleId', titleObj.id).first();
+          if (existingContent) {
             console.log(`El título "${titleObj.title}" ya tiene un contenido.`);
             continue; // Saltar al siguiente título
           }
@@ -302,8 +309,7 @@ router.get('/all-content-creation', async (req, res) => {
             continue;
           }
 
-          const contents = [];
-          for (const section of parsedOutline.h2) {
+          const contents = await Promise.all(parsedOutline.h2.map(async (section) => {
             console.log('Creando contenido para subtítulo: ', section.titulo);
             let userPrompt = `Redacta un contenido de blog con el título: ${titleObj.title}. La keyword principal es: ${keyword.keyword}. Por ahora solo escribe únicamente el contenido para el subtítulo ${section.titulo}.`;
 
@@ -312,9 +318,8 @@ router.get('/all-content-creation', async (req, res) => {
               userPrompt += ` Incluye las siguientes subsecciones: ${subSections}.`;
             }
 
-            const openAIResponse = await OpenaiCreateSubtitles(systemPrompt, userPrompt);
-            contents.push(openAIResponse);
-          }
+            return await OpenaiCreateSubtitles(systemPrompt, userPrompt);
+          }));
 
           const titleContent = contents.join('\n\n');
           const editorResponse = await openAIEditor(titleContent, keywordPlan.userId);
